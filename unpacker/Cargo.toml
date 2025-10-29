@@ -1,0 +1,10 @@
+[package]
+name = "unpacker"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+libc = { version = "0.2.177", default-features = false }
+memfd-runner = { version = "0.2.3", default-features = false }
+miniz_oxide = { version = "0.8.9", default-features = false, features = ["with-alloc"] }
+wee_alloc = "0.4.5"

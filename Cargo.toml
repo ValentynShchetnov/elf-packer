@@ -1,6 +1,13 @@
-[package]
-name = "elf-packer"
-version = "0.1.0"
-edition = "2024"
+[workspace]
+members = ["packer", "unpacker"]
+resolver = "3"
 
-[dependencies]
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
