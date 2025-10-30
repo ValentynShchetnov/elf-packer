@@ -6,14 +6,21 @@ use clap::Parser;
 use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf};
 
+/// Command-line tool to encrypt and pack ELF-executable files.
+/// The tool reads the specified ELF file, applies optional password-based encryption, and writes the packed output to a new file.
+/// If no password provided new file acts like original one. Else it asks for a password to decrypt.
 #[derive(Parser)]
 #[command(version, about)]
 struct Args {
+    /// Path to elf file to be encrypted and packed
     file: PathBuf,
 
+    /// Enables password-based encryption for the packed file. Prompts for a key if set to true.
     #[arg(short, long, default_value = "false")]
     key: bool,
 
+    /// Optional path for the output packed file. Defaults to the original file's name suffix if not specified.
+    /// If file already exists adds '.pkd' suffix.
     #[arg(short, long)]
     output: Option<PathBuf>,
 }
@@ -43,10 +50,20 @@ fn main() -> anyhow::Result<()> {
     unpacker.append(&mut nonce.to_vec());
     unpacker.append(&mut ciphertext);
 
-    fs::write(
-        args.output.unwrap_or(args.file.file_name().unwrap().into()),
-        &unpacker,
-    )?;
+    let file_name = match args.output {
+        Some(n) => n,
+        None => {
+            let mut origin = args.file.file_name().unwrap().to_owned();
+
+            if fs::exists(&origin).unwrap_or(false) {
+                origin.push(".pkd");
+            }
+
+            origin.into()
+        }
+    };
+
+    fs::write(file_name, &unpacker)?;
 
     Ok(())
 }

@@ -18,23 +18,12 @@ const DATA_OFFSET: usize = 72;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn main(argc: isize, argv: *const *const u8, envp: *const *const u8) -> isize {
-    let mut env = Vec::new();
+    let mut args = argv_to_vec(&argc, &argv);
+    let mut env = env_to_vec(&envp);
 
-    unsafe {
-        let mut e = envp;
-        while !(*e).is_null() {
-            let s = core::ffi::CStr::from_ptr(*e as *const i8);
-
-            if s.count_bytes() <= 256 {
-                env.push(s.to_str().unwrap_or(""));
-            }
-
-            e = e.add(1);
-        }
-    }
-
+    args.truncate(32);
     env.truncate(64);
-    run_main(&argv_to_vec(&argc, &argv), &env);
+    run_main(&args, &env);
     0
 }
 
@@ -60,6 +49,44 @@ fn run_main(args: &[&str], env: &[&str]) {
             libc::write(1, "No payload found.\n".as_ptr() as *const _, 18);
         }
     }
+}
+
+fn argv_to_vec<'a>(argc: &'a isize, argv: &'a *const *const u8) -> Vec<&'a str> {
+    let mut result = Vec::with_capacity(*argc as usize);
+
+    for i in 1..*argc {
+        unsafe {
+            let ptr = *argv.offset(i);
+            let cstr = CStr::from_ptr(ptr as *const i8);
+            let str_slice = cstr.to_str().unwrap_or("");
+
+            if str_slice.len() <= 256 {
+                result.push(str_slice);
+            }
+        }
+    }
+
+    result
+}
+
+fn env_to_vec<'a>(envp: &*const *const u8) -> Vec<&'a str> {
+    let mut result = Vec::new();
+
+    unsafe {
+        let mut e = *envp;
+        while !(*e).is_null() {
+            let s = core::ffi::CStr::from_ptr(*e as *const i8);
+            let str_slice = s.to_str().unwrap_or("");
+
+            if str_slice.len() <= 256 {
+                result.push(str_slice);
+            }
+
+            e = e.add(1);
+        }
+    }
+
+    result
 }
 
 fn process_payload(payload: &[u8]) -> Vec<u8> {
@@ -145,21 +172,6 @@ fn read_key(buf: &mut [u8]) -> usize {
     }
 }
 
-fn argv_to_vec<'a>(argc: &'a isize, argv: &'a *const *const u8) -> Vec<&'a str> {
-    let mut result = Vec::with_capacity(*argc as usize);
-
-    for i in 1..*argc {
-        unsafe {
-            let ptr = *argv.offset(i);
-            let cstr = CStr::from_ptr(ptr as *const i8);
-            let str_slice = cstr.to_str().unwrap_or("");
-            result.push(str_slice); // String::from(str_slice));
-        }
-    }
-
-    result
-}
-
 fn read_self() -> Result<Vec<u8>, ()> {
     unsafe {
         let path = b"/proc/self/exe\0";
@@ -213,12 +225,6 @@ fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         .rposition(|window| window == needle)
 }
 
-fn execute(file: &[u8], args: &[&str], env: &[&str]) -> Result<i32, RunError> {
-    let options = RunOptions::new().with_args(&args).with_env(&env);
-
-    Ok(run_with_options(&file, options)?)
-}
-
 fn decode(file: &[u8]) -> Vec<u8> {
     match miniz_oxide::inflate::decompress_to_vec(file) {
         Ok(v) => v,
@@ -227,6 +233,12 @@ fn decode(file: &[u8]) -> Vec<u8> {
             libc::_exit(1)
         },
     }
+}
+
+fn execute(file: &[u8], args: &[&str], env: &[&str]) -> Result<i32, RunError> {
+    let options = RunOptions::new().with_args(&args).with_env(&env);
+
+    Ok(run_with_options(&file, options)?)
 }
 
 #[panic_handler]
