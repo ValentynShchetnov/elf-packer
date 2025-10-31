@@ -3,7 +3,8 @@ use chacha20poly1305::{
     ChaCha20Poly1305,
 };
 use clap::Parser;
-use sha2::{Digest, Sha256};
+use rand::rand_core::{self, TryRngCore};
+use sha2::Sha256;
 use std::{fs, path::PathBuf};
 
 /// Command-line tool to encrypt and pack ELF-executable files.
@@ -25,7 +26,8 @@ struct Args {
     output: Option<PathBuf>,
 }
 
-static UNPACKER: &[u8] = include_bytes!("../../target/release/unpacker");
+const UNPACKER: &[u8] = include_bytes!("../../target/release/unpacker");
+const PBKDF2_ROUNDS: u32 = 600_000;
 
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
@@ -37,8 +39,14 @@ fn main() -> anyhow::Result<()> {
         false => "".to_string(),
     };
 
+    let mut salt = [0; 16];
+    rand_core::OsRng.try_fill_bytes(&mut salt)?;
+
+    let mut buf = [0; 32];
+    pbkdf2::pbkdf2_hmac::<Sha256>(key.as_bytes(), &salt, PBKDF2_ROUNDS, &mut buf);
+
     #[allow(deprecated)]
-    let cipher = ChaCha20Poly1305::new(&Sha256::digest(&key));
+    let cipher = ChaCha20Poly1305::new(chacha20poly1305::Key::from_slice(&buf));
     let nonce = ChaCha20Poly1305::generate_nonce(&mut OsRng);
     let mut ciphertext = cipher
         .encrypt(&nonce, encode(&raw_file)?.as_slice())
@@ -46,7 +54,7 @@ fn main() -> anyhow::Result<()> {
 
     let mut unpacker = UNPACKER.to_vec();
     unpacker.append(&mut b".packed_elf".to_vec());
-    unpacker.append(&mut bcrypt::hash(key, 12)?.as_bytes().to_vec());
+    unpacker.append(&mut salt.to_vec());
     unpacker.append(&mut nonce.to_vec());
     unpacker.append(&mut ciphertext);
 

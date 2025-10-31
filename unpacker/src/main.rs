@@ -1,20 +1,21 @@
-#![no_std]
+// #![no_std]
 #![no_main]
 
 use chacha20poly1305::{AeadInPlace, ChaCha20Poly1305, KeyInit, Nonce};
 use memfd_runner::{run_with_options, RunError, RunOptions};
-use sha2::{Digest, Sha256};
 
 extern crate alloc;
 
+use alloc::vec;
 use alloc::vec::Vec;
 use core::ffi::CStr;
+use sha2::Sha256;
 
 #[global_allocator]
 static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
 
-const NONCE_OFFSET: usize = 60;
-const DATA_OFFSET: usize = 72;
+const SALT_LEN: usize = 16;
+const NONCE_LEN: usize = 12;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn main(argc: isize, argv: *const *const u8, envp: *const *const u8) -> isize {
@@ -37,7 +38,7 @@ fn run_main(args: &[&str], env: &[&str]) {
     };
 
     if let Some(pos) = find_bytes(&buf, b".packed_elf") {
-        let data = process_payload(&buf[pos + ".packed_elf".len()..]);
+        let data = process_payload(&buf[pos + ".packed_elf".len()..]).unwrap();
 
         if execute(&decode(&data), args, env).is_err() {
             unsafe {
@@ -89,54 +90,26 @@ fn env_to_vec<'a>(envp: &*const *const u8) -> Vec<&'a str> {
     result
 }
 
-fn process_payload(payload: &[u8]) -> Vec<u8> {
-    let hash = match str::from_utf8(&payload[..NONCE_OFFSET]) {
-        Ok(v) => v,
-        Err(_) => unsafe {
-            libc::write(1, "Failed to read metadata\n".as_ptr() as *const _, 24);
-            libc::_exit(1)
-        },
-    };
-    let nonce = &payload[NONCE_OFFSET..DATA_OFFSET];
+fn process_payload(payload: &[u8]) -> Result<Vec<u8>, ()> {
+    let salt = &payload[..SALT_LEN];
+    let nonce = &payload[SALT_LEN..SALT_LEN + NONCE_LEN];
 
     let mut key = [0; 256];
 
-    let len = match bcrypt::verify("", hash) {
-        Ok(true) => 0,
-        Ok(false) => read_key(&mut key),
-        Err(_) => unsafe {
-            libc::write(1, "Bcrypt error\n".as_ptr() as *const _, 13);
-            libc::_exit(1)
-        },
-    };
+    let len = read_key(&mut key);
 
-    let mut result = payload[DATA_OFFSET..].to_vec();
-    match bcrypt::verify(&key[..len], hash) {
-        Ok(true) => {
-            let cipher = ChaCha20Poly1305::new(&Sha256::digest(&key[..len]));
+    let mut buf = [0; 32];
+    pbkdf2::pbkdf2_hmac::<Sha256>(&key[..len], salt, 600_000, &mut buf);
 
-            #[allow(deprecated)]
-            if cipher
-                .decrypt_in_place(Nonce::from_slice(&nonce), b"", &mut result)
-                .is_err()
-            {
-                unsafe {
-                    libc::write(1, "Decryptor error\n".as_ptr() as *const _, 16);
-                    libc::_exit(1)
-                }
-            }
+    let mut result = payload[SALT_LEN + NONCE_LEN..].to_vec();
+    #[allow(deprecated)]
+    let cipher = ChaCha20Poly1305::new(chacha20poly1305::Key::from_slice(&buf));
+    #[allow(deprecated)]
+    cipher
+        .decrypt_in_place(Nonce::from_slice(&nonce), b"", &mut result)
+        .map_err(|_| ())?;
 
-            result
-        }
-        Ok(false) => unsafe {
-            libc::write(1, "Wrong key\n".as_ptr() as *const _, 10);
-            libc::_exit(1)
-        },
-        Err(_) => unsafe {
-            libc::write(1, "Bcrypt error\n".as_ptr() as *const _, 13);
-            libc::_exit(1)
-        },
-    }
+    Ok(result)
 }
 
 fn read_key(buf: &mut [u8]) -> usize {
@@ -204,8 +177,7 @@ fn read_self() -> Result<Vec<u8>, ()> {
             let _ = libc::close(fd);
             return Ok(buf);
         } else {
-            let mut buf: Vec<u8> = Vec::with_capacity(size);
-            buf.set_len(size);
+            let mut buf: Vec<u8> = vec![0; size];
 
             let r = libc::read(fd, buf.as_mut_ptr() as *mut _, size);
 
@@ -240,8 +212,9 @@ fn execute(file: &[u8], args: &[&str], env: &[&str]) -> Result<i32, RunError> {
 
     Ok(run_with_options(&file, options)?)
 }
-
+/*
 #[panic_handler]
 fn my_panic(_info: &core::panic::PanicInfo) -> ! {
     unsafe { libc::_exit(1) }
 }
+*/
