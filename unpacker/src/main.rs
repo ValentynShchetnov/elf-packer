@@ -1,7 +1,19 @@
-// #![no_std]
+#![no_std]
 #![no_main]
 
-use chacha20poly1305::{AeadInPlace, ChaCha20Poly1305, KeyInit, Nonce};
+#[cfg(feature = "decrypt")]
+mod decrypt {
+    pub use chacha20poly1305::{AeadInPlace, ChaCha20Poly1305, KeyInit, Nonce};
+    pub use sha2::Sha256;
+
+    pub const SALT_LEN: usize = 16;
+    pub const NONCE_LEN: usize = 12;
+    pub const PBKDF2_ROUNDS: u32 = 600_000;
+}
+
+#[cfg(feature = "decrypt")]
+use decrypt::*;
+
 use memfd_runner::{run_with_options, RunError, RunOptions};
 
 extern crate alloc;
@@ -9,13 +21,9 @@ extern crate alloc;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::ffi::CStr;
-use sha2::Sha256;
 
 #[global_allocator]
 static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
-
-const SALT_LEN: usize = 16;
-const NONCE_LEN: usize = 12;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn main(argc: isize, argv: *const *const u8, envp: *const *const u8) -> isize {
@@ -38,7 +46,10 @@ fn run_main(args: &[&str], env: &[&str]) {
     };
 
     if let Some(pos) = find_bytes(&buf, b".packed_elf") {
-        let data = process_payload(&buf[pos + ".packed_elf".len()..]).unwrap();
+        #[cfg(feature = "decrypt")]
+        let data = decrypt(&buf[pos + ".packed_elf".len()..]).unwrap();
+        #[cfg(not(feature = "decrypt"))]
+        let data = &buf[pos + ".packed_elf".len()..];
 
         if execute(&decode(&data), args, env).is_err() {
             unsafe {
@@ -90,18 +101,19 @@ fn env_to_vec<'a>(envp: &*const *const u8) -> Vec<&'a str> {
     result
 }
 
-fn process_payload(payload: &[u8]) -> Result<Vec<u8>, ()> {
+#[cfg(feature = "decrypt")]
+fn decrypt(payload: &[u8]) -> Result<Vec<u8>, ()> {
     let salt = &payload[..SALT_LEN];
     let nonce = &payload[SALT_LEN..SALT_LEN + NONCE_LEN];
+    let mut result = payload[SALT_LEN + NONCE_LEN..].to_vec();
 
     let mut key = [0; 256];
 
     let len = read_key(&mut key);
 
     let mut buf = [0; 32];
-    pbkdf2::pbkdf2_hmac::<Sha256>(&key[..len], salt, 600_000, &mut buf);
+    pbkdf2::pbkdf2_hmac::<Sha256>(&key[..len], salt, PBKDF2_ROUNDS, &mut buf);
 
-    let mut result = payload[SALT_LEN + NONCE_LEN..].to_vec();
     #[allow(deprecated)]
     let cipher = ChaCha20Poly1305::new(chacha20poly1305::Key::from_slice(&buf));
     #[allow(deprecated)]
@@ -112,6 +124,7 @@ fn process_payload(payload: &[u8]) -> Result<Vec<u8>, ()> {
     Ok(result)
 }
 
+#[cfg(feature = "decrypt")]
 fn read_key(buf: &mut [u8]) -> usize {
     unsafe {
         libc::write(1, "Decryption key: ".as_ptr() as *const _, 16);
@@ -212,9 +225,9 @@ fn execute(file: &[u8], args: &[&str], env: &[&str]) -> Result<i32, RunError> {
 
     Ok(run_with_options(&file, options)?)
 }
-/*
+
 #[panic_handler]
 fn my_panic(_info: &core::panic::PanicInfo) -> ! {
     unsafe { libc::_exit(1) }
 }
-*/
+

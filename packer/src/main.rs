@@ -26,7 +26,7 @@ struct Args {
     output: Option<PathBuf>,
 }
 
-const UNPACKER: &[u8] = include_bytes!("../../target/release/unpacker");
+include!("include_bin.rs");
 const PBKDF2_ROUNDS: u32 = 600_000;
 
 fn main() -> anyhow::Result<()> {
@@ -39,24 +39,37 @@ fn main() -> anyhow::Result<()> {
         false => "".to_string(),
     };
 
-    let mut salt = [0; 16];
-    rand_core::OsRng.try_fill_bytes(&mut salt)?;
+    let mut encoded = encode(&raw_file)?;
 
-    let mut buf = [0; 32];
-    pbkdf2::pbkdf2_hmac::<Sha256>(key.as_bytes(), &salt, PBKDF2_ROUNDS, &mut buf);
+    let unpacker = match key.as_bytes() {
+        &[] => {
+            let mut unpacker = UNPACKER.to_vec();
+            unpacker.append(&mut b".packed_elf".to_vec());
+            unpacker.append(&mut encoded);
 
-    #[allow(deprecated)]
-    let cipher = ChaCha20Poly1305::new(chacha20poly1305::Key::from_slice(&buf));
-    let nonce = ChaCha20Poly1305::generate_nonce(&mut OsRng);
-    let mut ciphertext = cipher
-        .encrypt(&nonce, encode(&raw_file)?.as_slice())
-        .unwrap();
+            unpacker
+        },
+        k => {
+            let mut salt = [0; 16];
+            let mut buf = [0; 32];
+            let nonce = ChaCha20Poly1305::generate_nonce(&mut OsRng);
 
-    let mut unpacker = UNPACKER.to_vec();
-    unpacker.append(&mut b".packed_elf".to_vec());
-    unpacker.append(&mut salt.to_vec());
-    unpacker.append(&mut nonce.to_vec());
-    unpacker.append(&mut ciphertext);
+            rand_core::OsRng.try_fill_bytes(&mut salt)?;
+            pbkdf2::pbkdf2_hmac::<Sha256>(k, &salt, PBKDF2_ROUNDS, &mut buf);
+
+            #[allow(deprecated)]
+            let cipher = ChaCha20Poly1305::new(chacha20poly1305::Key::from_slice(&buf));
+            let mut ciphertext = cipher.encrypt(&nonce, encoded.as_slice()).unwrap();
+
+            let mut unpacker = DECRYPT_UNPACKER.to_vec();
+            unpacker.append(&mut b".packed_elf".to_vec());
+            unpacker.append(&mut salt.to_vec());
+            unpacker.append(&mut nonce.to_vec());
+            unpacker.append(&mut ciphertext);
+
+            unpacker
+        }
+    };
 
     let file_name = match args.output {
         Some(n) => n,

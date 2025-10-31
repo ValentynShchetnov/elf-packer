@@ -3,6 +3,8 @@ members = ["packer", "unpacker"]
 resolver = "3"
 
 [profile.dev]
+opt-level = "z"
+lto = true
 panic = "abort"
 
 [profile.release]
