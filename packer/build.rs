@@ -6,10 +6,11 @@ fn main() {
     let compile_args = ["build", "-p", "unpacker", "--release"];
 
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
-    let out_file = PathBuf::from("../target/release/unpacker");
+    let out_file = PathBuf::from("../target/unpacker-build/release/unpacker");
 
     let status = Command::new("cargo")
         .args(compile_args)
+        .env("CARGO_TARGET_DIR", "../target/unpacker-build")
         .status()
         .expect("Failed to build unpacker");
 
@@ -21,6 +22,7 @@ fn main() {
     let status = Command::new("cargo")
         .args(compile_args)
         .args(["-F", "decrypt"])
+        .env("CARGO_TARGET_DIR", "../target/unpacker-build")
         .status()
         .expect("Failed to build unpacker");
 
