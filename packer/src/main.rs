@@ -1,6 +1,6 @@
 use chacha20poly1305::{
-    aead::{Aead, AeadCore, KeyInit, OsRng},
     ChaCha20Poly1305,
+    aead::{Aead, AeadCore, KeyInit, OsRng},
 };
 use clap::Parser;
 use rand::rand_core::{self, TryRngCore};
@@ -95,4 +95,38 @@ fn pack_with_key(data: Vec<u8>, key: &[u8]) -> anyhow::Result<Vec<u8>> {
     unpacker.append(&mut ciphertext);
 
     Ok(unpacker)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{PBKDF2_ROUNDS, pack_with_key};
+    use chacha20poly1305::{AeadInPlace, ChaCha20Poly1305, Key, KeyInit, Nonce};
+    use sha2::Sha256;
+
+    #[test]
+    fn packing() {
+        let data = "text";
+        let key = "password";
+
+        let packed = pack_with_key(data.as_bytes().to_vec(), key.as_bytes()).unwrap();
+
+        let len = packed.len();
+
+        assert_eq!(&packed[len - 59..len - 48], b".packed_elf");
+        let salt = &packed[len - 48..len - 32];
+        let nonce = &packed[len - 32..len - 20];
+        let mut result = packed[len - 20..].to_vec();
+
+        let mut buf = [0; 32];
+        pbkdf2::pbkdf2_hmac::<Sha256>(key.as_bytes(), salt, PBKDF2_ROUNDS, &mut buf);
+
+        #[allow(deprecated)]
+        let cipher = ChaCha20Poly1305::new(Key::from_slice(&buf));
+        #[allow(deprecated)]
+        cipher
+            .decrypt_in_place(Nonce::from_slice(&nonce), b"", &mut result)
+            .unwrap();
+
+        assert_eq!(&result, b"text");
+    }
 }

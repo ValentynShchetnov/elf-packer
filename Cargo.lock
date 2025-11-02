@@ -567,6 +567,7 @@ dependencies = [
  "memfd-runner",
  "miniz_oxide",
  "pbkdf2",
+ "rand",
  "sha2",
  "wee_alloc",
 ]
