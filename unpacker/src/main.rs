@@ -2,33 +2,23 @@
 #![no_main]
 
 #[cfg(feature = "decrypt")]
-mod decrypt {
-    pub use chacha20poly1305::{AeadInPlace, ChaCha20Poly1305, KeyInit, Nonce};
-    pub use sha2::Sha256;
+mod decrypt;
+mod fs;
+mod parse;
 
-    pub const SALT_LEN: usize = 16;
-    pub const NONCE_LEN: usize = 12;
-    pub const PBKDF2_ROUNDS: u32 = 600_000;
-}
-
-#[cfg(feature = "decrypt")]
-use decrypt::*;
-
-use memfd_runner::{RunError, RunOptions, run_with_options};
+use memfd_runner::{run_with_options, RunError, RunOptions};
 
 extern crate alloc;
 
-use alloc::vec;
 use alloc::vec::Vec;
-use core::ffi::CStr;
 
 #[global_allocator]
 static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn main(argc: isize, argv: *const *const u8, envp: *const *const u8) -> isize {
-    let mut args = argv_to_vec(&argc, &argv);
-    let mut env = env_to_vec(&envp);
+    let mut args = parse::argv_to_vec(&argc, &argv);
+    let mut env = parse::env_to_vec(&envp);
 
     args.truncate(32);
     env.truncate(64);
@@ -37,7 +27,7 @@ pub extern "C" fn main(argc: isize, argv: *const *const u8, envp: *const *const 
 }
 
 fn run_main(args: &[&str], env: &[&str]) {
-    let buf = match read_self() {
+    let buf = match fs::read_self() {
         Ok(v) => v,
         Err(_) => unsafe {
             libc::write(1, "Failed to read self\n".as_ptr() as *const _, 20);
@@ -47,7 +37,7 @@ fn run_main(args: &[&str], env: &[&str]) {
 
     if let Some(pos) = find_bytes(&buf, b".packed_elf") {
         #[cfg(feature = "decrypt")]
-        let data = decrypt(&buf[pos + ".packed_elf".len()..]).unwrap();
+        let data = decrypt::read_key_and_decrypt(&buf[pos + ".packed_elf".len()..]).unwrap();
         #[cfg(not(feature = "decrypt"))]
         let data = &buf[pos + ".packed_elf".len()..];
 
@@ -60,147 +50,6 @@ fn run_main(args: &[&str], env: &[&str]) {
     } else {
         unsafe {
             libc::write(1, "No payload found.\n".as_ptr() as *const _, 18);
-        }
-    }
-}
-
-fn argv_to_vec<'a>(argc: &'a isize, argv: &'a *const *const u8) -> Vec<&'a str> {
-    let mut result = Vec::with_capacity(*argc as usize);
-
-    for i in 1..*argc {
-        unsafe {
-            let ptr = *argv.offset(i);
-            let cstr = CStr::from_ptr(ptr as *const i8);
-            let str_slice = cstr.to_str().unwrap_or("");
-
-            if str_slice.len() <= 256 {
-                result.push(str_slice);
-            }
-        }
-    }
-
-    result
-}
-
-fn env_to_vec<'a>(envp: &*const *const u8) -> Vec<&'a str> {
-    let mut result = Vec::new();
-
-    unsafe {
-        let mut e = *envp;
-        while !(*e).is_null() {
-            let s = core::ffi::CStr::from_ptr(*e as *const i8);
-            let str_slice = s.to_str().unwrap_or("");
-
-            if str_slice.len() <= 256 {
-                result.push(str_slice);
-            }
-
-            e = e.add(1);
-        }
-    }
-
-    result
-}
-
-#[cfg(feature = "decrypt")]
-fn decrypt(payload: &[u8]) -> Result<Vec<u8>, ()> {
-    let salt = &payload[..SALT_LEN];
-    let nonce = &payload[SALT_LEN..SALT_LEN + NONCE_LEN];
-    let mut result = payload[SALT_LEN + NONCE_LEN..].to_vec();
-
-    let mut key = [0; 256];
-
-    let len = read_key(&mut key);
-
-    let mut buf = [0; 32];
-    pbkdf2::pbkdf2_hmac::<Sha256>(&key[..len], salt, PBKDF2_ROUNDS, &mut buf);
-
-    #[allow(deprecated)]
-    let cipher = ChaCha20Poly1305::new(chacha20poly1305::Key::from_slice(&buf));
-    #[allow(deprecated)]
-    cipher
-        .decrypt_in_place(Nonce::from_slice(&nonce), b"", &mut result)
-        .map_err(|_| ())?;
-
-    Ok(result)
-}
-
-#[cfg(feature = "decrypt")]
-fn read_key(buf: &mut [u8]) -> usize {
-    unsafe {
-        libc::write(1, "Decryption key: ".as_ptr() as *const _, 16);
-
-        let mut term: libc::termios = core::mem::zeroed();
-        libc::tcgetattr(0, &mut term);
-        let old_term = term;
-        term.c_lflag &= !libc::ECHO;
-        libc::tcsetattr(0, libc::TCSANOW, &term);
-
-        let mut total = 0;
-        while total < buf.len() {
-            let mut byte: u8 = 0;
-            let r = libc::read(0, &mut byte as *mut u8 as *mut _, 1);
-            if r <= 0 {
-                break;
-            }
-
-            if byte == b'\n' || byte == b'\r' {
-                break;
-            }
-
-            buf[total] = byte;
-            total += 1;
-        }
-
-        libc::tcsetattr(0, libc::TCSANOW, &old_term);
-
-        libc::write(1, "\n".as_ptr() as *const _, 1);
-        total
-    }
-}
-
-fn read_self() -> Result<Vec<u8>, ()> {
-    unsafe {
-        let path = b"/proc/self/exe\0";
-        let fd = libc::open(path.as_ptr() as *const _, 0);
-        if fd < 0 {
-            return Err(());
-        }
-
-        let mut stats: libc::stat = core::mem::zeroed();
-        if libc::fstat(fd, &mut stats) != 0 {
-            let _ = libc::close(fd);
-            return Err(());
-        }
-        let size = stats.st_size as usize;
-
-        if size == 0 {
-            let mut buf = Vec::new();
-            let mut chunk = [0u8; 4096];
-            loop {
-                let n = libc::read(fd, chunk.as_mut_ptr() as *mut _, chunk.len());
-                if n == 0 {
-                    break;
-                } else if n < 0 {
-                    let _ = libc::close(fd);
-                    return Err(());
-                }
-                let n = n as usize;
-                buf.extend_from_slice(&chunk[..n]);
-            }
-            let _ = libc::close(fd);
-            Ok(buf)
-        } else {
-            let mut buf: Vec<u8> = vec![0; size];
-
-            let r = libc::read(fd, buf.as_mut_ptr() as *mut _, size);
-
-            if r <= 0 {
-                return Err(());
-            }
-
-            let _ = libc::close(fd);
-            Ok(buf)
         }
     }
 }

@@ -1,6 +1,6 @@
 use chacha20poly1305::{
-    ChaCha20Poly1305,
     aead::{Aead, AeadCore, KeyInit, OsRng},
+    ChaCha20Poly1305,
 };
 use clap::Parser;
 use rand::rand_core::{self, TryRngCore};
@@ -39,50 +39,22 @@ fn main() -> anyhow::Result<()> {
         false => "".to_string(),
     };
 
-    let mut encoded = encode(&raw_file)?;
+    let compressed = compress(&raw_file)?;
 
     let unpacker = match key.as_bytes() {
-        &[] => {
-            let mut unpacker = UNPACKER.to_vec();
-            unpacker.append(&mut b".packed_elf".to_vec());
-            unpacker.append(&mut encoded);
-
-            unpacker
-        }
-        k => {
-            let mut salt = [0; 16];
-            let mut buf = [0; 32];
-            let nonce = ChaCha20Poly1305::generate_nonce(&mut OsRng);
-
-            rand_core::OsRng.try_fill_bytes(&mut salt)?;
-            pbkdf2::pbkdf2_hmac::<Sha256>(k, &salt, PBKDF2_ROUNDS, &mut buf);
-
-            #[allow(deprecated)]
-            let cipher = ChaCha20Poly1305::new(chacha20poly1305::Key::from_slice(&buf));
-            let mut ciphertext = cipher.encrypt(&nonce, encoded.as_slice()).unwrap();
-
-            let mut unpacker = DECRYPT_UNPACKER.to_vec();
-            unpacker.append(&mut b".packed_elf".to_vec());
-            unpacker.append(&mut salt.to_vec());
-            unpacker.append(&mut nonce.to_vec());
-            unpacker.append(&mut ciphertext);
-
-            unpacker
-        }
+        &[] => pack(compressed),
+        k => pack_with_key(compressed, k)?,
     };
 
-    let file_name = match args.output {
-        Some(n) => n,
-        None => {
-            let mut origin = args.file.file_name().unwrap().to_owned();
+    let file_name = args.output.unwrap_or_else(|| {
+        let mut origin = args.file.file_name().unwrap().to_owned();
 
-            if fs::exists(&origin).unwrap_or(false) {
-                origin.push(".pkd");
-            }
-
-            origin.into()
+        if fs::exists(&origin).unwrap_or(true) {
+            origin.push(".pkd");
         }
-    };
+
+        origin.into()
+    });
 
     fs::write(&file_name, &unpacker)?;
 
@@ -92,6 +64,35 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn encode(file: &[u8]) -> anyhow::Result<Vec<u8>> {
+fn compress(file: &[u8]) -> anyhow::Result<Vec<u8>> {
     Ok(miniz_oxide::deflate::compress_to_vec(file, 10))
+}
+
+fn pack(mut data: Vec<u8>) -> Vec<u8> {
+    let mut unpacker = UNPACKER.to_vec();
+    unpacker.append(&mut b".packed_elf".to_vec());
+    unpacker.append(&mut data);
+
+    unpacker
+}
+
+fn pack_with_key(data: Vec<u8>, key: &[u8]) -> anyhow::Result<Vec<u8>> {
+    let mut salt = [0; 16];
+    let mut buf = [0; 32];
+    let nonce = ChaCha20Poly1305::generate_nonce(&mut OsRng);
+
+    rand_core::OsRng.try_fill_bytes(&mut salt)?;
+    pbkdf2::pbkdf2_hmac::<Sha256>(key, &salt, PBKDF2_ROUNDS, &mut buf);
+
+    #[allow(deprecated)]
+    let cipher = ChaCha20Poly1305::new(chacha20poly1305::Key::from_slice(&buf));
+    let mut ciphertext = cipher.encrypt(&nonce, data.as_slice()).unwrap();
+
+    let mut unpacker = DECRYPT_UNPACKER.to_vec();
+    unpacker.append(&mut b".packed_elf".to_vec());
+    unpacker.append(&mut salt.to_vec());
+    unpacker.append(&mut nonce.to_vec());
+    unpacker.append(&mut ciphertext);
+
+    Ok(unpacker)
 }
