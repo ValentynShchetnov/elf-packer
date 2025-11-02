@@ -84,7 +84,10 @@ fn main() -> anyhow::Result<()> {
         }
     };
 
-    fs::write(file_name, &unpacker)?;
+    fs::write(&file_name, &unpacker)?;
+
+    let permissions = fs::metadata(&args.file)?.permissions();
+    fs::set_permissions(&file_name, permissions)?;
 
     Ok(())
 }
