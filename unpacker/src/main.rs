@@ -14,7 +14,7 @@ mod decrypt {
 #[cfg(feature = "decrypt")]
 use decrypt::*;
 
-use memfd_runner::{run_with_options, RunError, RunOptions};
+use memfd_runner::{RunError, RunOptions, run_with_options};
 
 extern crate alloc;
 
@@ -51,6 +51,7 @@ fn run_main(args: &[&str], env: &[&str]) {
         #[cfg(not(feature = "decrypt"))]
         let data = &buf[pos + ".packed_elf".len()..];
 
+        #[allow(clippy::needless_borrow)]
         if execute(&decode(&data), args, env).is_err() {
             unsafe {
                 libc::write(1, "Failed to execute payload\n".as_ptr() as *const _, 26);
@@ -188,7 +189,7 @@ fn read_self() -> Result<Vec<u8>, ()> {
                 buf.extend_from_slice(&chunk[..n]);
             }
             let _ = libc::close(fd);
-            return Ok(buf);
+            Ok(buf)
         } else {
             let mut buf: Vec<u8> = vec![0; size];
 
@@ -199,7 +200,7 @@ fn read_self() -> Result<Vec<u8>, ()> {
             }
 
             let _ = libc::close(fd);
-            return Ok(buf);
+            Ok(buf)
         }
     }
 }
@@ -221,13 +222,12 @@ fn decode(file: &[u8]) -> Vec<u8> {
 }
 
 fn execute(file: &[u8], args: &[&str], env: &[&str]) -> Result<i32, RunError> {
-    let options = RunOptions::new().with_args(&args).with_env(&env);
+    let options = RunOptions::new().with_args(args).with_env(env);
 
-    Ok(run_with_options(&file, options)?)
+    run_with_options(file, options)
 }
 
 #[panic_handler]
 fn my_panic(_info: &core::panic::PanicInfo) -> ! {
     unsafe { libc::_exit(1) }
 }
-

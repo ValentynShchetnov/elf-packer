@@ -1,6 +1,6 @@
 use chacha20poly1305::{
-    aead::{Aead, AeadCore, KeyInit, OsRng},
     ChaCha20Poly1305,
+    aead::{Aead, AeadCore, KeyInit, OsRng},
 };
 use clap::Parser;
 use rand::rand_core::{self, TryRngCore};
@@ -48,7 +48,7 @@ fn main() -> anyhow::Result<()> {
             unpacker.append(&mut encoded);
 
             unpacker
-        },
+        }
         k => {
             let mut salt = [0; 16];
             let mut buf = [0; 32];
