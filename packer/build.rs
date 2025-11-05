@@ -17,7 +17,7 @@ fn main() {
     assert!(status.success(), "Unpacker build failure");
 
     let unpacker = out_dir.join("unpacker");
-    fs::copy(&out_file, &unpacker).expect("Failed to move unpacker into another dirrectory");
+    fs::copy(&out_file, &unpacker).expect("Failed to move unpacker into another directory");
 
     let status = Command::new("cargo")
         .args(compile_args)
@@ -29,8 +29,7 @@ fn main() {
     assert!(status.success(), "Unpacker build failure");
 
     let decrypt_unpacker = out_dir.join("decrypt_unpacker");
-    fs::copy(&out_file, &decrypt_unpacker)
-        .expect("Failed to move unpacker into another dirrectory");
+    fs::copy(&out_file, &decrypt_unpacker).expect("Failed to move unpacker into another directory");
 
     fs::write(
         "src/include_bin.rs",

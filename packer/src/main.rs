@@ -124,7 +124,7 @@ mod tests {
         let cipher = ChaCha20Poly1305::new(Key::from_slice(&buf));
         #[allow(deprecated)]
         cipher
-            .decrypt_in_place(Nonce::from_slice(&nonce), b"", &mut result)
+            .decrypt_in_place(Nonce::from_slice(nonce), b"", &mut result)
             .unwrap();
 
         assert_eq!(&result, b"text");
