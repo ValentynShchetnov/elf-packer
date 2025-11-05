@@ -22,13 +22,13 @@ fn decrypt(payload: &[u8], key: &[u8]) -> Result<Vec<u8>, ()> {
     let mut result = payload[SALT_LEN + NONCE_LEN..].to_vec();
 
     let mut buf = [0; 32];
-    pbkdf2::pbkdf2_hmac::<Sha256>(&key, salt, PBKDF2_ROUNDS, &mut buf);
+    pbkdf2::pbkdf2_hmac::<Sha256>(key, salt, PBKDF2_ROUNDS, &mut buf);
 
     #[allow(deprecated)]
     let cipher = ChaCha20Poly1305::new(Key::from_slice(&buf));
     #[allow(deprecated)]
     cipher
-        .decrypt_in_place(Nonce::from_slice(&nonce), b"", &mut result)
+        .decrypt_in_place(Nonce::from_slice(nonce), b"", &mut result)
         .map_err(|_| ())?;
 
     Ok(result)

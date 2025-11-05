@@ -39,7 +39,17 @@ fn run_main(args: &[&str], env: &[&str]) {
 
     if let Some(pos) = utils::find_bytes(&buf, b".packed_elf") {
         #[cfg(feature = "decrypt")]
-        let data = decrypt::read_key_and_decrypt(&buf[pos + ".packed_elf".len()..]).unwrap();
+        let data = match decrypt::read_key_and_decrypt(&buf[pos + ".packed_elf".len()..]) {
+            Ok(v) => v,
+            Err(_) => unsafe {
+                libc::write(
+                    1,
+                    "Failed to decrypt, wrong key or corrupted data\n".as_ptr() as *const _,
+                    47,
+                );
+                libc::_exit(1);
+            },
+        };
         #[cfg(not(feature = "decrypt"))]
         let data = &buf[pos + ".packed_elf".len()..];
 
