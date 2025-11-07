@@ -28,8 +28,7 @@ Options:
 **On Linux**
 
 ```bash
-	cargo build --release -p unpacker
-	cargo build --release -p packer
+	cargo build --release
 ```
 
 The compiled binary will be available in the **target/release** directory.
